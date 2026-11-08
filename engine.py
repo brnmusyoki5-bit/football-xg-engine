@@ -31,6 +31,25 @@ def cache_match_result(league, home_team, away_team, home_goals, away_goals):
     conn.commit()
     conn.close()
 
+def seed_initial_data():
+    """Populates initial matches so rolling averages have data to calculate instantly."""
+    conn = sqlite3.connect('football_cache.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM matches")
+    count = cursor.fetchone()[0]
+    conn.close()
+    
+    if count == 0:
+        sample_matches = [
+            ("EPL", "Arsenal", "Wolves", 2, 0),
+            ("EPL", "Man City", "Bournemouth", 3, 1),
+            ("EPL", "Liverpool", "Brighton", 2, 2),
+            ("EPL", "Chelsea", "Fulham", 1, 0),
+            ("EPL", "Newcastle", "Tottenham", 2, 1),
+        ]
+        for m in sample_matches:
+            cache_match_result(m[0], m[1], m[2], m[3], m[4])
+
 def get_rolling_league_averages(league_name):
     conn = sqlite3.connect('football_cache.db')
     cursor = conn.cursor()
@@ -41,7 +60,7 @@ def get_rolling_league_averages(league_name):
     conn.close()
     
     if not rows:
-        return 1.35, 1.05  # Default fallback baseline
+        return 1.45, 1.15  # Default fallback baseline
         
     total_matches = len(rows)
     total_home_goals = sum(row[0] for row in rows)
@@ -60,39 +79,53 @@ def get_rolling_league_averages(league_name):
 def poisson_probability(lmbda, k):
     return (math.exp(-lmbda) * (lmbda ** k)) / math.factorial(k)
 
-def track_live_match(league_name, home_team, away_team, pre_home_xg, pre_away_xg, elapsed_minutes, current_home_goals, current_away_goals):
-    league_home_avg, league_away_avg = get_rolling_league_averages(league_name)
+def evaluate_match():
+    print("\n========================================")
+    print("      FOOTBALL LIVE xG ENGINE           ")
+    print("========================================")
     
-    remaining_fraction = max(0.0, (90 - elapsed_minutes) / 90.0)
+    league = input("Enter League Name (e.g., EPL): ") or "EPL"
+    home = input("Enter Home Team: ") or "Home Team"
+    away = input("Enter Away Team: ") or "Away Team"
+    
+    try:
+        pre_home_xg = float(input("Enter Pre-Match Home xG baseline (default 1.50): ") or 1.50)
+        pre_away_xg = float(input("Enter Pre-Match Away xG baseline (default 1.10): ") or 1.10)
+        elapsed = int(input("Enter Elapsed Minutes (0 to 90): ") or 0)
+        curr_home = int(input("Current Home Goals: ") or 0)
+        curr_away = int(input("Current Away Goals: ") or 0)
+    except ValueError:
+        print("Invalid input format. Using standard defaults.")
+        pre_home_xg, pre_away_xg, elapsed, curr_home, curr_away = 1.50, 1.10, 0, 0, 0
+
+    league_home_avg, league_away_avg = get_rolling_league_averages(league)
+    
+    remaining_fraction = max(0.0, (90 - elapsed) / 90.0)
     remaining_home_xg = pre_home_xg * remaining_fraction
     remaining_away_xg = pre_away_xg * remaining_fraction
     
-    print(f"\n--- LIVE MATCH ENGINE: {home_team} vs {away_team} ---")
-    print(f"Elapsed Time: {elapsed_minutes}' | Score: {current_home_goals} - {current_away_goals}")
-    print(f"League Baselines (DB Auto-Fetched) -> Home Avg: {league_home_avg}, Away Avg: {league_away_avg}")
+    print(f"\n--- ANALYSIS FOR: {home} vs {away} ---")
+    print(f"Match State: {elapsed}' played | Score: {curr_home} - {curr_away}")
+    print(f"Auto-Fetched League Baselines -> Home Avg: {league_home_avg} | Away Avg: {league_away_avg}")
     print(f"Projected Remaining xG -> Home: {remaining_home_xg:.2f} | Away: {remaining_away_xg:.2f}")
     
-    home_prob_no_goal = poisson_probability(remaining_home_xg, 0)
-    away_prob_no_goal = poisson_probability(remaining_away_xg, 0)
+    h_no_goal = poisson_probability(remaining_home_xg, 0)
+    a_no_goal = poisson_probability(remaining_away_xg, 0)
     
-    print(f"Probability Home scores 0 more goals: {home_prob_no_goal * 100:.1f}%")
-    print(f"Probability Away scores 0 more goals: {away_prob_no_goal * 100:.1f}%")
+    print(f"\n[Poisson Probabilities for Rest of Match]")
+    print(f"-> Home team scores 0 more goals: {h_no_goal * 100:.1f}%")
+    print(f"-> Away team scores 0 more goals: {a_no_goal * 100:.1f}%")
+    print("========================================\n")
 
 
-# ==========================================
-# 3. EXECUTION TEST
-# ==========================================
 if __name__ == "__main__":
     init_db()
-    cache_match_result("English Premier League", "Arsenal", "Chelsea", 2, 1)
+    seed_initial_data()
     
-    track_live_match(
-        league_name="English Premier League",
-        home_team="Arsenal",
-        away_team="Chelsea",
-        pre_home_xg=1.65,
-        pre_away_xg=1.10,
-        elapsed_minutes=60,
-        current_home_goals=1,
-        current_away_goals=0
-    )
+    # Run interactive session
+    while True:
+        evaluate_match()
+        cont = input("Evaluate another match? (y/n): ").strip().lower()
+        if cont != 'y':
+            print("Engine closed. Good luck with your punting today!")
+            break
